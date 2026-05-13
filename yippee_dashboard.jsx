@@ -275,18 +275,45 @@ function computeStats(data, platform) {
 }
 
 /* ── Keyword Scrape Panel ── */
-function KeywordPanel({ platform, accent, webhookUrl }) {
+/* ── Toast ── */
+function Toast({ toasts }) {
+  return (
+    <div style={{ position:"fixed", bottom:28, right:28, zIndex:9999, display:"flex", flexDirection:"column", gap:10, pointerEvents:"none" }}>
+      {toasts.map(t => (
+        <div key={t.id} style={{
+          display:"flex", alignItems:"center", gap:12,
+          background: t.type === "success" ? "#0f2a1e" : "#2a0f0f",
+          border: `1px solid ${t.type === "success" ? "#00C49F44" : "#FF450044"}`,
+          borderLeft: `3px solid ${t.type === "success" ? "#00C49F" : "#FF4500"}`,
+          borderRadius:12, padding:"13px 18px", minWidth:280, maxWidth:400,
+          boxShadow:"0 8px 32px rgba(0,0,0,0.5)",
+          animation:"slideIn 0.25s ease",
+        }}>
+          <span style={{ fontSize:18, flexShrink:0 }}>{t.type === "success" ? "✅" : "❌"}</span>
+          <div>
+            <div style={{ fontSize:13, fontWeight:600, color:"#fff", marginBottom:2 }}>
+              {t.type === "success" ? "Scrape Triggered!" : "Failed"}
+            </div>
+            <div style={{ fontSize:11, color:"rgba(255,255,255,0.5)", fontFamily:"monospace", lineHeight:1.4 }}>{t.msg}</div>
+          </div>
+        </div>
+      ))}
+      <style>{`@keyframes slideIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:translateX(0)}}`}</style>
+    </div>
+  );
+}
+
+function KeywordPanel({ platform, accent, webhookUrl, onToast }) {
   const [keywords, setKeywords] = useState("");
-  const [status, setStatus] = useState(null); // null | "loading" | "success" | "error"
-  const [msg, setMsg] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const kws = keywords.split(/[\n,]+/).map(k => k.trim()).filter(Boolean);
   const suffix = platform === "x" ? " -is:retweet lang:en" : "";
 
   async function handleSubmit() {
     if (!kws.length) return;
-    if (!webhookUrl) { setStatus("error"); setMsg("Webhook not configured for this platform yet"); return; }
-    setStatus("loading"); setMsg("");
+    if (!webhookUrl) { onToast("error", "Webhook not configured for this platform yet"); return; }
+    setLoading(true);
     try {
       let body;
       if (platform === "x") {
@@ -307,11 +334,12 @@ function KeywordPanel({ platform, accent, webhookUrl }) {
       }
       const res = await fetch(webhookUrl, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setStatus("success");
-      setMsg(`✓ Triggered ${kws.length} keyword${kws.length > 1 ? "s" : ""} — data will appear in the sheet shortly`);
+      onToast("success", `${kws.length} keyword${kws.length > 1 ? "s" : ""} sent — data will appear in the sheet shortly`);
       setKeywords("");
     } catch(e) {
-      setStatus("error"); setMsg(`✗ ${e.message}`);
+      onToast("error", e.message);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -340,16 +368,12 @@ function KeywordPanel({ platform, accent, webhookUrl }) {
             </div>
           )}
         </div>
-        <div style={{ display:"flex", flexDirection:"column", gap:10, minWidth:160 }}>
-          <button
-            onClick={handleSubmit}
-            disabled={status === "loading" || !kws.length || !webhookUrl}
-            style={{ background:accent, border:"none", color:"#fff", padding:"11px 22px", borderRadius:9, cursor:(kws.length && webhookUrl) ? "pointer":"default", fontSize:12, fontWeight:700, opacity:(kws.length && webhookUrl) ? 1 : 0.45, letterSpacing:0.5 }}>
-            {status === "loading" ? "◎  Triggering…" : "⚡  Trigger Scrape"}
-          </button>
-          {status === "success" && <div style={{ fontSize:11, color:"#00C49F", fontFamily:"monospace", lineHeight:1.5 }}>{msg}</div>}
-          {status === "error"   && <div style={{ fontSize:11, color:"#FF4500", fontFamily:"monospace", lineHeight:1.5 }}>{msg}</div>}
-        </div>
+        <button
+          onClick={handleSubmit}
+          disabled={loading || !kws.length || !webhookUrl}
+          style={{ background:accent, border:"none", color:"#fff", padding:"11px 22px", borderRadius:9, cursor:(kws.length && webhookUrl && !loading) ? "pointer":"default", fontSize:12, fontWeight:700, opacity:(kws.length && webhookUrl) ? 1 : 0.45, letterSpacing:0.5, alignSelf:"flex-start" }}>
+          {loading ? "◎  Triggering…" : "⚡  Trigger Scrape"}
+        </button>
       </div>
     </div>
   );
@@ -368,6 +392,13 @@ export default function App() {
   const [sheetId, setSheetId] = useState(DEFAULT_SHEET_ID);
   const [sheetInput, setSheetInput] = useState("");
   const [showSheet, setShowSheet] = useState(false);
+  const [toasts, setToasts] = useState([]);
+
+  function addToast(type, msg) {
+    const id = Date.now();
+    setToasts(p => [...p, { id, type, msg }]);
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 4000);
+  }
 
   async function loadData(sid) {
     setLoading(true);
@@ -467,7 +498,7 @@ export default function App() {
         ))}
       </div>
 
-      <KeywordPanel platform={tab} accent={curTab.color} webhookUrl={WEBHOOKS[tab]} />
+      <KeywordPanel platform={tab} accent={curTab.color} webhookUrl={WEBHOOKS[tab]} onToast={addToast} />
 
       {loading ? (
         <div style={{ textAlign:"center", padding:80, color:"rgba(255,255,255,0.3)" }}>
@@ -561,6 +592,8 @@ export default function App() {
       <div style={{ textAlign:"center", marginTop:36, color:"rgba(255,255,255,0.12)", fontSize:9, fontFamily:"monospace" }}>
         YIPPEE INTELLIGENCE · ITC CAMPAIGN · N8N + GOOGLE SHEETS
       </div>
+
+      <Toast toasts={toasts} />
     </div>
   );
 }
