@@ -1,7 +1,14 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, CartesianGrid } from "recharts";
 
 const DEFAULT_SHEET_ID = "1gb8Ci26C1x53DbHiqCM7XBSxPbb6vK-IxtnrYMIXgrk";
+
+const WEBHOOKS = {
+  x:       "https://n8n.srv1263670.hstgr.cloud/webhook/665abd9e-95ce-4ce6-bfc1-e55b57312130",
+  reddit:  "https://n8n.srv1263670.hstgr.cloud/webhook/6e481b16-9ed5-4e76-91a1-1c0f97e2ceaf",
+  threads: null,
+};
+
 const TABS = [
   { key: "x", label: "𝕏 Twitter", sheet: "X", color: "#1DA1F2", icon: "𝕏" },
   { key: "reddit", label: "Reddit", sheet: "Reddit", color: "#FF4500", icon: "⬡" },
@@ -267,12 +274,92 @@ function computeStats(data, platform) {
   return {total:n, totalEng, avgEng:Math.round(totalEng/n), uniq, topHour:topH?`${topH[0]}:00`:"-", hourData, tierData, dayData};
 }
 
+/* ── Keyword Scrape Panel ── */
+function KeywordPanel({ platform, accent, webhookUrl }) {
+  const [keywords, setKeywords] = useState("");
+  const [status, setStatus] = useState(null); // null | "loading" | "success" | "error"
+  const [msg, setMsg] = useState("");
+
+  const kws = keywords.split(/[\n,]+/).map(k => k.trim()).filter(Boolean);
+  const suffix = platform === "x" ? " -is:retweet lang:en" : "";
+
+  async function handleSubmit() {
+    if (!kws.length) return;
+    if (!webhookUrl) { setStatus("error"); setMsg("Webhook not configured for this platform yet"); return; }
+    setStatus("loading"); setMsg("");
+    try {
+      let body;
+      if (platform === "x") {
+        body = {
+          campaign: { brand: "ITC Yippee", keywords: kws, hashtags: ["YippeeNoodles","InstantNoodles","DesiFood"], geo: "IN" },
+          filters:  { min_engagement: 10, min_follower_count: 500 }
+        };
+      } else if (platform === "reddit") {
+        body = {
+          keywords: kws,
+          config: {
+            campaign: { brand: "ITC Yippee", hashtags: ["YippeeNoodles","InstantNoodles","DesiFood"] },
+            filters:  { min_engagement: 10, min_score: 5 }
+          }
+        };
+      } else {
+        body = { keywords: kws };
+      }
+      const res = await fetch(webhookUrl, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setStatus("success");
+      setMsg(`✓ Triggered ${kws.length} keyword${kws.length > 1 ? "s" : ""} — data will appear in the sheet shortly`);
+      setKeywords("");
+    } catch(e) {
+      setStatus("error"); setMsg(`✗ ${e.message}`);
+    }
+  }
+
+  return (
+    <div style={{ marginTop:28, background:`${accent}08`, border:`1px solid ${accent}22`, borderRadius:16, padding:"20px 22px" }}>
+      <div style={{ fontSize:10, textTransform:"uppercase", letterSpacing:1.5, color:accent, fontFamily:"monospace", marginBottom:14, display:"flex", alignItems:"center", gap:8 }}>
+        <span>⚡</span> Trigger Scrape — Add Keywords
+        {platform === "threads" && <span style={{ color:"rgba(255,255,255,0.25)", fontSize:9, marginLeft:4 }}>(webhook coming soon)</span>}
+      </div>
+      <div style={{ display:"flex", gap:14, flexWrap:"wrap", alignItems:"flex-start" }}>
+        <div style={{ flex:1, minWidth:280 }}>
+          <textarea
+            value={keywords}
+            onChange={e => setKeywords(e.target.value)}
+            placeholder={"Enter keywords — one per line or comma-separated\ne.g. yippee noodles, maggi vs yippee, 2am noodles hostel"}
+            rows={3}
+            style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:`1px solid ${accent}30`, borderRadius:9, padding:12, color:"#fff", fontSize:12, fontFamily:"monospace", outline:"none", resize:"vertical", boxSizing:"border-box" }}
+          />
+          {kws.length > 0 && (
+            <div style={{ marginTop:8, display:"flex", flexWrap:"wrap", gap:6 }}>
+              {kws.map((kw, i) => (
+                <span key={i} style={{ background:`${accent}18`, border:`1px solid ${accent}35`, color:accent, borderRadius:6, padding:"3px 10px", fontSize:11, fontFamily:"monospace" }}>
+                  {kw}{suffix}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:10, minWidth:160 }}>
+          <button
+            onClick={handleSubmit}
+            disabled={status === "loading" || !kws.length || !webhookUrl}
+            style={{ background:accent, border:"none", color:"#fff", padding:"11px 22px", borderRadius:9, cursor:(kws.length && webhookUrl) ? "pointer":"default", fontSize:12, fontWeight:700, opacity:(kws.length && webhookUrl) ? 1 : 0.45, letterSpacing:0.5 }}>
+            {status === "loading" ? "◎  Triggering…" : "⚡  Trigger Scrape"}
+          </button>
+          {status === "success" && <div style={{ fontSize:11, color:"#00C49F", fontFamily:"monospace", lineHeight:1.5 }}>{msg}</div>}
+          {status === "error"   && <div style={{ fontSize:11, color:"#FF4500", fontFamily:"monospace", lineHeight:1.5 }}>{msg}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Main Dashboard ── */
 export default function App() {
   const [tab, setTab] = useState("reddit");
   const [data, setData] = useState({x:[],reddit:[],threads:[]});
   const [loading, setLoading] = useState(true);
-  const [logs, setLogs] = useState([]);
   const [search, setSearch] = useState("");
   const [vis, setVis] = useState(DEF_VIS);
   const [showPaste, setShowPaste] = useState(false);
@@ -282,16 +369,11 @@ export default function App() {
   const [sheetInput, setSheetInput] = useState("");
   const [showSheet, setShowSheet] = useState(false);
 
-  const log = useCallback((msg) => setLogs(p => [...p.slice(-10), `${new Date().toLocaleTimeString()} ${msg}`]), []);
-
   async function loadData(sid) {
     setLoading(true);
-    setLogs([]);
     const res = {};
     for (const t of TABS) {
-      log(`Fetching ${t.sheet}...`);
-      const {rows, method} = await fetchSheetCSV(sid, t.sheet);
-      log(`${t.sheet}: ${rows.length} rows (${method})`);
+      const {rows} = await fetchSheetCSV(sid, t.sheet);
       res[t.key] = rows;
     }
     setData(res);
@@ -304,17 +386,15 @@ export default function App() {
     if (!pasteText.trim()) return;
     try {
       const rows = parseCSV(pasteText);
-      log(`Pasted ${rows.length} rows into ${pasteTab}`);
       setData(p => ({...p, [pasteTab]: rows}));
       setShowPaste(false);
       setPasteText("");
-    } catch(e) { log(`Parse error: ${e.message}`); }
+    } catch(e) { console.error(e); }
   }
 
   function handleSheetLoad() {
     const m = sheetInput.match(/\/d\/([a-zA-Z0-9_-]+)/);
     if (m) { setSheetId(m[1]); loadData(m[1]); setShowSheet(false); }
-    else log("Invalid URL");
   }
 
   const curTab = TABS.find(t=>t.key===tab);
@@ -371,15 +451,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Logs */}
-      {logs.length > 0 && (
-        <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.06)", borderRadius:10, padding:"8px 14px", marginBottom:16, maxHeight:100, overflowY:"auto" }}>
-          {logs.map((l,i)=><div key={i} style={{ fontSize:10, color:"rgba(255,255,255,0.35)", fontFamily:"monospace", lineHeight:1.6 }}>{l}</div>)}
-        </div>
-      )}
-
       {/* Tabs */}
-      <div style={{ display:"flex", gap:6, marginBottom:24, flexWrap:"wrap" }}>
+      <div style={{ display:"flex", gap:6, marginBottom:24, flexWrap:"wrap", justifyContent:"center" }}>
         {TABS.map(t=>(
           <button key={t.key} onClick={()=>{setTab(t.key);setSearch("");}} style={{
             display:"flex", alignItems:"center", gap:8, padding:"9px 18px",
@@ -394,6 +467,8 @@ export default function App() {
         ))}
       </div>
 
+      <KeywordPanel platform={tab} accent={curTab.color} webhookUrl={WEBHOOKS[tab]} />
+
       {loading ? (
         <div style={{ textAlign:"center", padding:80, color:"rgba(255,255,255,0.3)" }}>
           <div style={{ fontSize:32, marginBottom:12, animation:"spin 1s linear infinite" }}>◎</div>
@@ -401,16 +476,18 @@ export default function App() {
           <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
         </div>
       ) : curData.length===0 && !search ? (
-        <div style={{ textAlign:"center", padding:60, color:"rgba(255,255,255,0.2)" }}>
-          <div style={{ fontSize:48, marginBottom:16 }}>∅</div>
-          <div style={{ fontSize:14, fontWeight:600, marginBottom:8 }}>No data for "{curTab.sheet}"</div>
-          <div style={{ fontSize:11, fontFamily:"monospace", color:"rgba(255,255,255,0.2)", marginBottom:16 }}>
-            If auto-fetch failed, use 📋 Paste CSV to load data manually.
+        <>
+          <div style={{ textAlign:"center", padding:60, color:"rgba(255,255,255,0.2)" }}>
+            <div style={{ fontSize:48, marginBottom:16 }}>∅</div>
+            <div style={{ fontSize:14, fontWeight:600, marginBottom:8 }}>No data for "{curTab.sheet}"</div>
+            <div style={{ fontSize:11, fontFamily:"monospace", color:"rgba(255,255,255,0.2)", marginBottom:16 }}>
+              If auto-fetch failed, use 📋 Paste CSV to load data manually.
+            </div>
+            <div style={{ fontSize:11, fontFamily:"monospace", color:"rgba(255,255,255,0.15)" }}>
+              Open your sheet → File → Download → CSV → paste here
+            </div>
           </div>
-          <div style={{ fontSize:11, fontFamily:"monospace", color:"rgba(255,255,255,0.15)" }}>
-            Open your sheet → File → Download → CSV → paste here
-          </div>
-        </div>
+        </>
       ) : (
         <>
           <div style={{ display:"flex", gap:10, marginBottom:24, flexWrap:"wrap" }}>
@@ -477,6 +554,7 @@ export default function App() {
               <DataTable data={curData} columns={allCols} visibleCols={curVis} accent={curTab.color}/>
             </div>
           </div>
+
         </>
       )}
 
