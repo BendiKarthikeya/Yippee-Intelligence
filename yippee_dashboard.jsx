@@ -335,10 +335,8 @@ function KeywordPanel({ platform, accent, webhookUrl, onToast }) {
   const [timePeriod, setTimePeriod] = useState(7);
   const [maxResults, setMaxResults] = useState(platform === "reddit" ? 25 : 10);
 
-  // X-specific query operators
-  const [minLikes,    setMinLikes]    = useState("");
-  const [minRetweets, setMinRetweets] = useState("");
-  const [minReplies,  setMinReplies]  = useState("");
+  // X-specific
+  const [xSortOrder, setXSortOrder] = useState("recency");
 
   // Reddit-specific
   const [redditSort,      setRedditSort]      = useState("relevance");
@@ -353,14 +351,11 @@ function KeywordPanel({ platform, accent, webhookUrl, onToast }) {
     try {
       let body;
       if (platform === "x") {
-        let q = kws.join(" OR ");
-        if (minLikes    > 0) q += ` min_faves:${minLikes}`;
-        if (minRetweets > 0) q += ` min_retweets:${minRetweets}`;
-        if (minReplies  > 0) q += ` min_replies:${minReplies}`;
         body = {
-          searchQuery: q,
+          searchQuery: kws.join(" OR "),
           max_results: maxResults,
           days: timePeriod,
+          sort_order: xSortOrder,
         };
       } else if (platform === "reddit") {
         const filters = { days: timePeriod, max_results: maxResults, sort: redditSort, subreddit: redditSubreddit.trim() };
@@ -431,21 +426,15 @@ function KeywordPanel({ platform, accent, webhookUrl, onToast }) {
         </div>
       </div>
 
-      {/* ── X-only query operator inputs ── */}
+      {/* ── X-only sort order ── */}
       {platform === "x" && (
-        <div style={{ display:"flex", gap:10, marginBottom:14 }}>
-          {[
-            { label:"Min Likes",    value:minLikes,    set:setMinLikes },
-            { label:"Min Retweets", value:minRetweets, set:setMinRetweets },
-            { label:"Min Replies",  value:minReplies,  set:setMinReplies },
-          ].map(({ label, value, set }) => (
-            <div key={label} style={{ display:"flex", flexDirection:"column", gap:4, flex:1 }}>
-              <span style={{ fontSize:9, textTransform:"uppercase", letterSpacing:1.2, color:"rgba(255,255,255,0.35)", fontFamily:"monospace" }}>{label}</span>
-              <input type="number" min="0" value={value} placeholder="0"
-                onChange={e => set(e.target.value === "" ? "" : Number(e.target.value))}
-                style={{ ...inputBase, width:"100%" }} />
-            </div>
-          ))}
+        <div style={{ marginBottom:14, display:"flex", alignItems:"center", gap:8 }}>
+          <span style={{ fontSize:9, textTransform:"uppercase", letterSpacing:1.2, color:"rgba(255,255,255,0.35)", fontFamily:"monospace", whiteSpace:"nowrap" }}>Sort Order</span>
+          <select value={xSortOrder} onChange={e => setXSortOrder(e.target.value)}
+            style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:7, padding:"4px 8px", color:"#fff", fontSize:11, fontFamily:"monospace", outline:"none", cursor:"pointer" }}>
+            <option value="recency">Recency</option>
+            <option value="relevancy">Relevancy</option>
+          </select>
         </div>
       )}
 
