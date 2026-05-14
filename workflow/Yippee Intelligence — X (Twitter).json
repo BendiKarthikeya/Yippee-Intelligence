@@ -532,7 +532,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const body = $input.first().json.body;\nconst searchQuery = body.searchQuery || '';\nconst maxResults = Math.min(Math.max(Number(body.max_results) || 10, 10), 100);\nconst days = Number(body.days) || 7;\nconst startTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();\nreturn [{ json: { searchQuery, maxResults, startTime } }];\n"
+        "jsCode": "const body = $input.first().json.body || {};\n// X API v2 does not support min_faves/min_retweets/min_replies on any tier — strip them.\nlet searchQuery = (body.searchQuery || '').toString()\n  .replace(/\\bmin_(faves|retweets|replies):\\d+/gi, '')\n  .replace(/\\s+/g, ' ')\n  .trim();\nif (!searchQuery) {\n  throw new Error('searchQuery is required and must be a non-empty string');\n}\nconst maxResults = Math.min(Math.max(Number(body.max_results) || 10, 10), 100);\n// X recent search requires start_time within last 7 days AND >10s before now.\nconst days = Math.min(Math.max(Number(body.days) || 7, 1), 7);\nconst startTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000 + 60 * 1000).toISOString();\nreturn [{ json: { searchQuery, maxResults, startTime } }];\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
