@@ -1,0 +1,645 @@
+{
+  "name": "Yippee Intelligence — X (Twitter)",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "https://api.x.com/2/tweets/search/recent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.searchQuery }}"
+            },
+            {
+              "name": "max_results",
+              "value": "={{ $json.maxResults }}"
+            },
+            {
+              "name": "tweet.fields",
+              "value": "created_at,public_metrics,entities,author_id,lang,conversation_id"
+            },
+            {
+              "name": "expansions",
+              "value": "author_id"
+            },
+            {
+              "name": "user.fields",
+              "value": "username,name,public_metrics,verified,profile_image_url,description"
+            },
+            {
+              "name": "start_time",
+              "value": "={{ $json.startTime }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "2ca7ee04-c28b-4c36-9075-c51b057afd50",
+      "name": "X — Search Tweets (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        64,
+        976
+      ],
+      "notesInFlow": true,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "YH5tR4YGdOpQrc5p",
+          "name": "Twitter Auth account"
+        }
+      },
+      "notes": "Header Auth: Name=Authorization, Value=Bearer YOUR_BEARER_TOKEN"
+    },
+    {
+      "parameters": {
+        "amount": 2
+      },
+      "id": "d9a81b2f-5155-4da2-bf73-26ebe1fdc741",
+      "name": "Rate Limit Wait (2s)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        352,
+        976
+      ],
+      "webhookId": "rate-wait-twitter"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "2c335bdd-9962-437b-b6fd-a368d44c95fb",
+      "name": "Loop Over Keywords1",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -192,
+        832
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─── Normalize Twitter API v2 response ───\nconst allItems = $input.all();\n\n// Get keyword from the current loop iteration (paired item)\nconst loopItem = $('Loop Over Keywords1').item.json;\nconst keyword = loopItem?.keyword || '';\nconst config = loopItem?.config || {\n  campaign: { keywords: [], hashtags: ['YippeeNoodles','InstantNoodles','DesiFood'] }\n};\nconst results = [];\n\nfor (const item of allItems) {\n  const responseData = item.json;\n  const tweets = responseData.data || [];\n  const users = {};\n\n  if (responseData.includes?.users) {\n    responseData.includes.users.forEach(u => { users[u.id] = u; });\n  }\n\n  for (const tweet of tweets) {\n    if (!tweet.id || !tweet.text) continue;\n\n    const author = users[tweet.author_id] || {};\n    const username = author.username || '';\n    const authorName = author.name || '';\n    const followers = author.public_metrics?.followers_count || 0;\n    const following = author.public_metrics?.following_count || 0;\n    const verified = author.verified || false;\n    const profileImage = author.profile_image_url || '';\n    const authorBio = author.description || '';\n\n    const likes = tweet.public_metrics?.like_count || 0;\n    const replies = tweet.public_metrics?.reply_count || 0;\n    const retweets = tweet.public_metrics?.retweet_count || 0;\n    const quotes = tweet.public_metrics?.quote_count || 0;\n    const impressions = tweet.public_metrics?.impression_count || 0;\n    const bookmarks = tweet.public_metrics?.bookmark_count || 0;\n    const total_eng = likes + replies + retweets + quotes;\n    const eng_rate = followers > 0 ? parseFloat((total_eng / followers * 100).toFixed(2)) : 0;\n\n    const text = tweet.text || '';\n    const hashtags = (tweet.entities?.hashtags || []).map(h => h.tag).join(', ');\n    const mentions = (tweet.entities?.mentions || []).map(m => m.username).join(', ');\n    const urls = (tweet.entities?.urls || []).map(u => u.expanded_url).join(', ');\n\n    const posted = tweet.created_at || new Date().toISOString();\n    const postedDate = new Date(posted);\n    const tweetUrl = username ? `https://x.com/${username}/status/${tweet.id}` : '';\n\n    const kw_hits = (config.campaign?.keywords || []).filter(k =>\n      text.toLowerCase().includes(k.toLowerCase())\n    ).length;\n    const ht_hits = (tweet.entities?.hashtags || []).map(h => h.tag || '').filter(h =>\n      (config.campaign?.hashtags || []).includes(h)\n    ).length;\n    const maxRelevance = (config.campaign?.keywords?.length || 1) * 0.4 + (config.campaign?.hashtags?.length || 1) * 0.3 + 0.001;\n    const relevance = parseFloat(((kw_hits * 0.4 + ht_hits * 0.3) / maxRelevance).toFixed(4));\n    const virality = parseFloat((Math.log10(likes + 2 * retweets + 3 * replies + 1) / Math.log10(followers + 2)).toFixed(4));\n    const influence = parseFloat((Math.log10(followers + 1) * eng_rate / 100).toFixed(4));\n    const composite = parseFloat((virality * 0.4 + relevance * 0.35 + influence * 0.25).toFixed(4));\n\n    const tier = followers > 1000000 ? 'macro' : followers > 100000 ? 'mid' : followers > 10000 ? 'micro' : 'nano';\n\n    results.push({\n      json: {\n        platform: 'twitter',\n        post_id: tweet.id,\n        tweet_url: tweetUrl,\n        author_username: username,\n        author_name: authorName,\n        author_followers: followers,\n        author_following: following,\n        author_verified: verified,\n        author_bio: authorBio.substring(0, 200),\n        author_profile_image: profileImage,\n        influencer_tier: tier,\n        text: text.substring(0, 500),\n        hashtags, mentions,\n        urls_in_tweet: urls,\n        media_type: tweet.attachments?.media_keys ? 'media' : 'none',\n        likes, replies, retweets, quotes, bookmarks, impressions,\n        total_engagement: total_eng,\n        engagement_rate: eng_rate,\n        posted_at: posted,\n        hour_of_day: postedDate.getUTCHours(),\n        day_of_week: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][postedDate.getUTCDay()],\n        is_weekend: [0, 6].includes(postedDate.getUTCDay()),\n        language: tweet.lang || '',\n        relevance_score: relevance,\n        virality_score: virality,\n        influence_score: influence,\n        composite_rank: composite,\n        search_keyword: keyword,\n        scraped_at: new Date().toISOString()\n      }\n    });\n  }\n}\n\n// Dedup by post_id and add global_rank\nconst seen = new Set();\nconst deduped = results.filter(r => {\n  if (seen.has(r.json.post_id)) return false;\n  seen.add(r.json.post_id);\n  return true;\n}).sort((a, b) => b.json.composite_rank - a.json.composite_rank);\ndeduped.forEach((r, idx) => { r.json.global_rank = idx + 1; });\n\nreturn deduped.length > 0 ? deduped : [{ json: { error: true, message: 'No tweets matched filters', scraped_at: new Date().toISOString() } }];\n"
+      },
+      "id": "5b524367-0cd2-4dcc-8a8b-7eef0dbdedde",
+      "name": "Normalize Tweets1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1gb8Ci26C1x53DbHiqCM7XBSxPbb6vK-IxtnrYMIXgrk",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "X",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "post_id"
+          ],
+          "schema": [
+            {
+              "id": "platform",
+              "displayName": "platform",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "post_id",
+              "displayName": "post_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "tweet_url",
+              "displayName": "tweet_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "author_username",
+              "displayName": "author_username",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "author_name",
+              "displayName": "author_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "author_followers",
+              "displayName": "author_followers",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "author_following",
+              "displayName": "author_following",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "author_verified",
+              "displayName": "author_verified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "author_bio",
+              "displayName": "author_bio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "author_profile_image",
+              "displayName": "author_profile_image",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "influencer_tier",
+              "displayName": "influencer_tier",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "text",
+              "displayName": "text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hashtags",
+              "displayName": "hashtags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "mentions",
+              "displayName": "mentions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "urls_in_tweet",
+              "displayName": "urls_in_tweet",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "media_type",
+              "displayName": "media_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "likes",
+              "displayName": "likes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "replies",
+              "displayName": "replies",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "retweets",
+              "displayName": "retweets",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "quotes",
+              "displayName": "quotes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "bookmarks",
+              "displayName": "bookmarks",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "impressions",
+              "displayName": "impressions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "total_engagement",
+              "displayName": "total_engagement",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "engagement_rate",
+              "displayName": "engagement_rate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "posted_at",
+              "displayName": "posted_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "hour_of_day",
+              "displayName": "hour_of_day",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "day_of_week",
+              "displayName": "day_of_week",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "is_weekend",
+              "displayName": "is_weekend",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "language",
+              "displayName": "language",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "relevance_score",
+              "displayName": "relevance_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "virality_score",
+              "displayName": "virality_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "influence_score",
+              "displayName": "influence_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "composite_rank",
+              "displayName": "composite_rank",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "search_keyword",
+              "displayName": "search_keyword",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scraped_at",
+              "displayName": "scraped_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "global_rank",
+              "displayName": "global_rank",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "e9656125-9df6-4a3a-b635-1ab42bf098b8",
+      "name": "Google Sheets — Twitter1",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        496,
+        496
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "b4uZ11WaHALk7JZL",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─── Summary Stats ───\nconst all = $input.all().filter(i => !i.json.error && !i.json.message).map(i => i.json);\nconst total = all.length;\n\nif (total === 0) {\n  return [{ json: { platform: 'twitter', total_posts_captured: 0, message: 'No data to summarize', generated_at: new Date().toISOString() } }];\n}\n\nconst avgComposite = parseFloat((all.reduce((s, r) => s + r.composite_rank, 0) / total).toFixed(4));\n\n// Top influencers\nconst topInfluencers = all.slice(0, 5).map(r => ({\n  username: r.author_username,\n  followers: r.author_followers,\n  engagement: r.total_engagement,\n  composite: r.composite_rank,\n  tweet_url: r.tweet_url\n}));\n\n// Peak hours\nconst hourDist = {};\nall.forEach(r => { hourDist[r.hour_of_day] = (hourDist[r.hour_of_day] || 0) + 1; });\nconst peakHour = Object.entries(hourDist).sort((a, b) => b[1] - a[1])[0];\n\n// Hashtag frequency\nconst hashtagFreq = {};\nall.forEach(r => {\n  (r.hashtags || '').split(', ').filter(Boolean).forEach(h => {\n    hashtagFreq[h] = (hashtagFreq[h] || 0) + 1;\n  });\n});\nconst topHashtags = Object.entries(hashtagFreq).sort((a, b) => b[1] - a[1]).slice(0, 10);\n\n// Tier distribution\nconst tierDist = {};\nall.forEach(r => { tierDist[r.influencer_tier] = (tierDist[r.influencer_tier] || 0) + 1; });\n\n// Weekend vs weekday\nconst weekendCount = all.filter(r => r.is_weekend).length;\n\nreturn [{\n  json: {\n    platform: 'twitter',\n    total_posts_captured: total,\n    avg_composite_rank: avgComposite,\n    peak_posting_hour_utc: peakHour ? parseInt(peakHour[0]) : null,\n    influencer_tier_distribution: tierDist,\n    top_10_hashtags: topHashtags.map(([tag, count]) => ({ tag, count })),\n    weekend_vs_weekday: { weekend: weekendCount, weekday: total - weekendCount },\n    top_5_influencers: topInfluencers,\n    generated_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "f0454d18-6011-43ca-b63d-488a2b5fc19b",
+      "name": "Generate Summary1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "665abd9e-95ce-4ce6-bfc1-e55b57312130",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -624,
+        832
+      ],
+      "id": "eb2def50-cc3c-4667-b5ec-fa381a7025e7",
+      "name": "Webhook",
+      "webhookId": "665abd9e-95ce-4ce6-bfc1-e55b57312130"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\nconst searchQuery = body.searchQuery || '';\nconst maxResults = Math.min(Math.max(Number(body.max_results) || 10, 10), 100);\nconst days = Number(body.days) || 7;\nconst startTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();\nreturn [{ json: { searchQuery, maxResults, startTime } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        832
+      ],
+      "id": "fdc1232c-b507-40d2-a858-c8807ba3a4ae",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "X — Search Tweets (API)": {
+      "main": [
+        [
+          {
+            "node": "Rate Limit Wait (2s)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate Limit Wait (2s)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Keywords1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Keywords1": {
+      "main": [
+        [
+          {
+            "node": "Normalize Tweets1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "X — Search Tweets (API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Tweets1": {
+      "main": [
+        [
+          {
+            "node": "Generate Summary1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Google Sheets — Twitter1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Keywords1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Summary1": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "57239371-a2da-473e-beea-025146e7bc7e",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "27de4a66f7bd61f16dabafe7bafe1e3420bf68eaa8be2f37e46213ac9298ef7f"
+  },
+  "id": "uzfqPUNeZzUP70d23qKZY",
+  "tags": []
+}

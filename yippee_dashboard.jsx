@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, CartesianGrid } from "recharts";
 
 const DEFAULT_SHEET_ID = "1gb8Ci26C1x53DbHiqCM7XBSxPbb6vK-IxtnrYMIXgrk";
@@ -303,12 +303,48 @@ function Toast({ toasts }) {
   );
 }
 
+const TIME_PERIODS = [
+  { label: "Last 24 hours", value: 1  },
+  { label: "Last 7 days",   value: 7  },
+  { label: "Last 15 days",  value: 15 },
+  { label: "Last 30 days",  value: 30 },
+  { label: "Last 60 days",  value: 60 },
+  { label: "Last 90 days",  value: 90 },
+];
+
+const dropdownArrow = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='rgba(255,255,255,0.3)'/%3E%3C/svg%3E")`;
+
+function SelectField({ label, value, onChange, options, accent, minWidth = 130 }) {
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:4, minWidth }}>
+      <span style={{ fontSize:9, textTransform:"uppercase", letterSpacing:1.2, color:"rgba(255,255,255,0.35)", fontFamily:"monospace" }}>{label}</span>
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        style={{ background:"rgba(255,255,255,0.04)", border:`1px solid ${accent}30`, borderRadius:8, padding:"7px 10px", paddingRight:24, color:"#fff", fontSize:12, fontFamily:"monospace", outline:"none", appearance:"none", cursor:"pointer", backgroundImage:dropdownArrow, backgroundRepeat:"no-repeat", backgroundPosition:"right 8px center" }}
+      >
+        {options.map(o => <option key={o.value} value={o.value} style={{ background:"#1a1a1a" }}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
 function KeywordPanel({ platform, accent, webhookUrl, onToast }) {
   const [keywords, setKeywords] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading,  setLoading]  = useState(false);
+  const [timePeriod, setTimePeriod] = useState(7);
+  const [maxResults, setMaxResults] = useState(platform === "reddit" ? 25 : 10);
+
+  // X-specific query operators
+  const [minLikes,    setMinLikes]    = useState("");
+  const [minRetweets, setMinRetweets] = useState("");
+  const [minReplies,  setMinReplies]  = useState("");
+
+  // Reddit-specific
+  const [redditSort,      setRedditSort]      = useState("relevance");
+  const [redditSubreddit, setRedditSubreddit] = useState("");
 
   const kws = keywords.split(/[\n,]+/).map(k => k.trim()).filter(Boolean);
-  const suffix = platform === "x" ? " -is:retweet lang:en" : "";
 
   async function handleSubmit() {
     if (!kws.length) return;
@@ -317,16 +353,22 @@ function KeywordPanel({ platform, accent, webhookUrl, onToast }) {
     try {
       let body;
       if (platform === "x") {
+        let q = kws.join(" OR ");
+        if (minLikes    > 0) q += ` min_faves:${minLikes}`;
+        if (minRetweets > 0) q += ` min_retweets:${minRetweets}`;
+        if (minReplies  > 0) q += ` min_replies:${minReplies}`;
         body = {
-          campaign: { brand: "ITC Yippee", keywords: kws, hashtags: ["YippeeNoodles","InstantNoodles","DesiFood"], geo: "IN" },
-          filters:  { min_engagement: 10, min_follower_count: 500 }
+          searchQuery: q,
+          max_results: maxResults,
+          days: timePeriod,
         };
       } else if (platform === "reddit") {
+        const filters = { days: timePeriod, max_results: maxResults, sort: redditSort, subreddit: redditSubreddit.trim() };
         body = {
           keywords: kws,
           config: {
             campaign: { brand: "ITC Yippee", hashtags: ["YippeeNoodles","InstantNoodles","DesiFood"] },
-            filters:  { min_engagement: 10, min_score: 5 }
+            filters,
           }
         };
       } else {
@@ -343,38 +385,137 @@ function KeywordPanel({ platform, accent, webhookUrl, onToast }) {
     }
   }
 
+  const inputBase = { background:"rgba(255,255,255,0.04)", border:`1px solid ${accent}30`, borderRadius:8, padding:"7px 10px", color:"#fff", fontSize:12, fontFamily:"monospace", outline:"none", boxSizing:"border-box" };
+  const row = { display:"flex", gap:10, flexWrap:"wrap", alignItems:"flex-end", marginBottom:12 };
+
   return (
     <div style={{ marginTop:28, background:`${accent}08`, border:`1px solid ${accent}22`, borderRadius:16, padding:"20px 22px" }}>
       <div style={{ fontSize:10, textTransform:"uppercase", letterSpacing:1.5, color:accent, fontFamily:"monospace", marginBottom:14, display:"flex", alignItems:"center", gap:8 }}>
         <span>⚡</span> Trigger Scrape — Add Keywords
         {platform === "threads" && <span style={{ color:"rgba(255,255,255,0.25)", fontSize:9, marginLeft:4 }}>(webhook coming soon)</span>}
       </div>
-      <div style={{ display:"flex", gap:14, flexWrap:"wrap", alignItems:"flex-start" }}>
-        <div style={{ flex:1, minWidth:280 }}>
+
+      {/* ── Top: keywords + time period + max results ── */}
+      <div style={{ display:"flex", gap:12, alignItems:"flex-start", marginBottom:14 }}>
+        <div style={{ flex:1 }}>
           <textarea
             value={keywords}
             onChange={e => setKeywords(e.target.value)}
-            placeholder={"Enter keywords — one per line or comma-separated\ne.g. yippee noodles, maggi vs yippee, 2am noodles hostel"}
+            placeholder={"Enter keywords — one per line or comma-separated\ne.g. Yippee Noodles, Yippee vs Maggi"}
             rows={3}
-            style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:`1px solid ${accent}30`, borderRadius:9, padding:12, color:"#fff", fontSize:12, fontFamily:"monospace", outline:"none", resize:"vertical", boxSizing:"border-box" }}
+            style={{ width:"100%", ...inputBase, resize:"vertical" }}
           />
           {kws.length > 0 && (
-            <div style={{ marginTop:8, display:"flex", flexWrap:"wrap", gap:6 }}>
+            <div style={{ marginTop:6, display:"flex", flexWrap:"wrap", gap:5 }}>
               {kws.map((kw, i) => (
                 <span key={i} style={{ background:`${accent}18`, border:`1px solid ${accent}35`, color:accent, borderRadius:6, padding:"3px 10px", fontSize:11, fontFamily:"monospace" }}>
-                  {kw}{suffix}
+                  {kw}
                 </span>
               ))}
             </div>
           )}
         </div>
-        <button
-          onClick={handleSubmit}
-          disabled={loading || !kws.length || !webhookUrl}
-          style={{ background:accent, border:"none", color:"#fff", padding:"11px 22px", borderRadius:9, cursor:(kws.length && webhookUrl && !loading) ? "pointer":"default", fontSize:12, fontWeight:700, opacity:(kws.length && webhookUrl) ? 1 : 0.45, letterSpacing:0.5, alignSelf:"flex-start" }}>
-          {loading ? "◎  Triggering…" : "⚡  Trigger Scrape"}
-        </button>
+        <SelectField label="Time Period" value={timePeriod} onChange={v => setTimePeriod(Number(v))} accent={accent} minWidth={145}
+          options={TIME_PERIODS.map(p => ({ value:p.value, label:p.label }))} />
+        <div style={{ display:"flex", flexDirection:"column", gap:4, minWidth:110 }}>
+          <span style={{ fontSize:9, textTransform:"uppercase", letterSpacing:1.2, color:"rgba(255,255,255,0.35)", fontFamily:"monospace" }}>Max Results</span>
+          <input
+            type="number"
+            min={platform === "reddit" ? 1 : 10}
+            max={100}
+            value={maxResults}
+            onChange={e => setMaxResults(e.target.value === "" ? "" : Number(e.target.value))}
+            placeholder={platform === "reddit" ? "25" : "10"}
+            style={{ ...inputBase, width:"100%" }}
+          />
+        </div>
       </div>
+
+      {/* ── X-only query operator inputs ── */}
+      {platform === "x" && (
+        <div style={{ display:"flex", gap:10, marginBottom:14 }}>
+          {[
+            { label:"Min Likes",    value:minLikes,    set:setMinLikes },
+            { label:"Min Retweets", value:minRetweets, set:setMinRetweets },
+            { label:"Min Replies",  value:minReplies,  set:setMinReplies },
+          ].map(({ label, value, set }) => (
+            <div key={label} style={{ display:"flex", flexDirection:"column", gap:4, flex:1 }}>
+              <span style={{ fontSize:9, textTransform:"uppercase", letterSpacing:1.2, color:"rgba(255,255,255,0.35)", fontFamily:"monospace" }}>{label}</span>
+              <input type="number" min="0" value={value} placeholder="0"
+                onChange={e => set(e.target.value === "" ? "" : Number(e.target.value))}
+                style={{ ...inputBase, width:"100%" }} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Reddit-only API inputs ── */}
+      {platform === "reddit" && <>
+        <div style={row}>
+          <SelectField label="Sort" value={redditSort} onChange={setRedditSort} accent={accent} minWidth={130}
+            options={["relevance","hot","new","top","comments"].map(s => ({ value:s, label:s.charAt(0).toUpperCase()+s.slice(1) }))} />
+        </div>
+        <div style={{ marginBottom:12 }}>
+          <span style={{ fontSize:9, textTransform:"uppercase", letterSpacing:1.2, color:"rgba(255,255,255,0.35)", fontFamily:"monospace", display:"block", marginBottom:4 }}>Subreddit — optional, leave blank to search all</span>
+          <input type="text" value={redditSubreddit} onChange={e => setRedditSubreddit(e.target.value)} placeholder="e.g. india, indiafood, IndianFood" style={{ ...inputBase, width:"100%" }} />
+        </div>
+      </>}
+
+      <button
+        onClick={handleSubmit}
+        disabled={loading || !kws.length || !webhookUrl}
+        style={{ background:accent, border:"none", color:"#fff", padding:"11px 22px", borderRadius:9, cursor:(kws.length && webhookUrl && !loading) ? "pointer":"default", fontSize:12, fontWeight:700, opacity:(kws.length && webhookUrl) ? 1 : 0.45, letterSpacing:0.5 }}>
+        {loading ? "◎  Triggering…" : "⚡  Trigger Scrape"}
+      </button>
+    </div>
+  );
+}
+
+/* ── Data Filter ── */
+function DataFilter({ tab, filters, onChange, accent }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  const activeCount = Object.values(filters).filter(v => v !== "" && v != null).length;
+  const numInput = (key, label) => (
+    <div style={{ marginBottom:8 }}>
+      <div style={{ fontSize:9, textTransform:"uppercase", letterSpacing:1.1, color:"rgba(255,255,255,0.35)", fontFamily:"monospace", marginBottom:3 }}>{label}</div>
+      <input type="number" min="0" value={filters[key] ?? ""} placeholder="0"
+        onChange={e => onChange({ ...filters, [key]: e.target.value === "" ? "" : Number(e.target.value) })}
+        style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:7, padding:"6px 9px", color:"#fff", fontSize:11, fontFamily:"monospace", outline:"none", width:"100%", boxSizing:"border-box" }} />
+    </div>
+  );
+  return (
+    <div ref={ref} style={{ position:"relative" }}>
+      <button onClick={() => setOpen(!open)} style={{ background: activeCount > 0 ? `${accent}22` : "rgba(255,255,255,0.06)", border:`1px solid ${activeCount > 0 ? accent+"44" : "rgba(255,255,255,0.08)"}`, color: activeCount > 0 ? accent : "#fff", padding:"8px 14px", borderRadius:9, cursor:"pointer", fontSize:11, fontFamily:"monospace", display:"flex", alignItems:"center", gap:6, whiteSpace:"nowrap" }}>
+        ⚡ Filter {activeCount > 0 && <span style={{ background:`${accent}30`, color:accent, padding:"1px 7px", borderRadius:5, fontSize:9, fontWeight:600 }}>{activeCount}</span>}
+      </button>
+      {open && (
+        <div style={{ position:"absolute", top:"calc(100% + 8px)", right:0, zIndex:100, background:"#111", border:"1px solid rgba(255,255,255,0.1)", borderRadius:12, padding:14, minWidth:200, boxShadow:"0 8px 32px rgba(0,0,0,0.6)" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+            <span style={{ fontSize:10, textTransform:"uppercase", letterSpacing:1.2, color:"rgba(255,255,255,0.4)", fontFamily:"monospace" }}>Filter Data</span>
+            <button onClick={() => onChange({})} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.35)", cursor:"pointer", fontSize:10, fontFamily:"monospace" }}>Clear all</button>
+          </div>
+          {tab === "x" && <>
+            {numInput("min_likes",     "Min Likes")}
+            {numInput("min_retweets",  "Min Retweets")}
+            {numInput("min_replies",   "Min Replies")}
+            {numInput("min_followers", "Min Followers")}
+            {numInput("min_views",     "Min Views")}
+          </>}
+          {tab === "reddit" && <>
+            {numInput("min_score",      "Min Upvotes")}
+            {numInput("min_comments",   "Min Comments")}
+            {numInput("max_downvotes",  "Max Downvotes")}
+            {numInput("min_karma",      "Min Author Karma")}
+            {numInput("min_engagement", "Min Engagement")}
+          </>}
+        </div>
+      )}
     </div>
   );
 }
@@ -385,6 +526,7 @@ export default function App() {
   const [data, setData] = useState({x:[],reddit:[],threads:[]});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [tableFilters, setTableFilters] = useState({x:{},reddit:{},threads:{}});
   const [vis, setVis] = useState(DEF_VIS);
   const [showPaste, setShowPaste] = useState(false);
   const [pasteText, setPasteText] = useState("");
@@ -431,11 +573,27 @@ export default function App() {
   const curTab = TABS.find(t=>t.key===tab);
   const allCols = tab==="x"?xCols:tab==="reddit"?redditCols:threadsCols;
   const curVis = vis[tab]||{};
+  const curFilters = tableFilters[tab] || {};
   const curData = useMemo(()=>{
-    let d=data[tab]||[];
-    if(search.trim()){const q=search.toLowerCase(); d=d.filter(r=>Object.values(r).some(v=>(v||"").toString().toLowerCase().includes(q)));}
+    let d = data[tab] || [];
+    if (search.trim()) { const q=search.toLowerCase(); d=d.filter(r=>Object.values(r).some(v=>(v||"").toString().toLowerCase().includes(q))); }
+    const f = curFilters;
+    if (tab === "x") {
+      if (f.min_likes)     d = d.filter(r => Number(r.likes)            >= f.min_likes);
+      if (f.min_retweets)  d = d.filter(r => Number(r.retweets)         >= f.min_retweets);
+      if (f.min_replies)   d = d.filter(r => Number(r.replies)          >= f.min_replies);
+      if (f.min_followers) d = d.filter(r => Number(r.author_followers) >= f.min_followers);
+      if (f.min_views)     d = d.filter(r => Number(r.impressions)      >= f.min_views);
+    }
+    if (tab === "reddit") {
+      if (f.min_score)      d = d.filter(r => Number(r.score)            >= f.min_score);
+      if (f.min_comments)   d = d.filter(r => Number(r.comments)         >= f.min_comments);
+      if (f.max_downvotes !== "" && f.max_downvotes != null) d = d.filter(r => Number(r.downvotes || 0) <= f.max_downvotes);
+      if (f.min_karma)      d = d.filter(r => Number(r.author_karma)     >= f.min_karma);
+      if (f.min_engagement) d = d.filter(r => Number(r.total_engagement) >= f.min_engagement);
+    }
     return d;
-  },[data,tab,search]);
+  },[data, tab, search, curFilters]);
   const stats = computeStats(curData, tab);
 
   return (
@@ -485,7 +643,7 @@ export default function App() {
       {/* Tabs */}
       <div style={{ display:"flex", gap:6, marginBottom:24, flexWrap:"wrap", justifyContent:"center" }}>
         {TABS.map(t=>(
-          <button key={t.key} onClick={()=>{setTab(t.key);setSearch("");}} style={{
+          <button key={t.key} onClick={()=>{setTab(t.key);setSearch("");setTableFilters(p=>({...p,[t.key]:{}}))}} style={{
             display:"flex", alignItems:"center", gap:8, padding:"9px 18px",
             background:tab===t.key?`${t.color}18`:"rgba(255,255,255,0.03)",
             border:`1px solid ${tab===t.key?t.color+"40":"rgba(255,255,255,0.06)"}`,
@@ -574,6 +732,7 @@ export default function App() {
                   <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search..."
                     style={{ width:"100%", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:9, padding:"8px 12px", color:"#fff", fontSize:12, fontFamily:"monospace", outline:"none", boxSizing:"border-box" }}/>
                 </div>
+                <DataFilter tab={tab} filters={curFilters} onChange={f=>setTableFilters(p=>({...p,[tab]:f}))} accent={curTab.color}/>
                 <ColumnFilter columns={allCols} visible={curVis}
                   onToggle={k=>setVis(p=>({...p,[tab]:{...p[tab],[k]:!p[tab][k]}}))}
                   onAll={()=>{const a={};allCols.forEach(c=>{a[c.key]=true});setVis(p=>({...p,[tab]:a}));}}
